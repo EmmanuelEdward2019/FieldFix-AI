@@ -1,0 +1,19 @@
+{
+  "title": "Acme Field Troubleshooting Notes",
+  "sections": [
+    {
+      "heading": "No power",
+      "page": 4,
+      "content": "Verify the AC adapter LED glows steadily on a known-good outlet before suspecting the system board.",
+      "component_tags": ["AC adapter"],
+      "model_applicability": ["AcmeBook Pro 14"]
+    },
+    {
+      "heading": "Swollen battery",
+      "page": 9,
+      "content": "If the back cover is lifting, the battery may be swelling. Stop charging and seek qualified help.",
+      "safety_tags": ["battery"],
+      "model_applicability": ["Acme Phone 12"]
+    }
+  ]
+}

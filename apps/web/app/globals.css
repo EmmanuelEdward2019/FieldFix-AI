@@ -1,0 +1,231 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --color-canvas: #14171c;
+  --color-panel: #191d23;
+  --color-panel-elevated: #20252d;
+  --color-edge: #2b313a;
+  --color-edge-strong: #3a424d;
+
+  --animate-fade-in: fade-in 180ms ease-out;
+  --animate-pulse-soft: pulse-soft 2s ease-in-out infinite;
+  --animate-radar-sweep: radar-sweep 2.4s linear infinite;
+  --animate-scan-y: scan-y 2.8s ease-in-out infinite;
+  --animate-spin-slow: spin 3.2s linear infinite;
+  --animate-float-y: float-y 3.6s ease-in-out infinite;
+  --animate-march: march 1.1s linear infinite;
+  --animate-wave-scroll: wave-scroll 5s linear infinite;
+  --animate-bar-pulse: bar-pulse 2.6s ease-in-out infinite alternate;
+  --animate-ring-fill: ring-fill 1.8s ease-out both;
+  --animate-ticker: ticker 28s linear infinite;
+  --animate-tick-pop: tick-pop 0.9s ease-out both;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pulse-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
+
+  @keyframes radar-sweep {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes scan-y {
+    0%,
+    100% {
+      top: 6%;
+    }
+    50% {
+      top: 88%;
+    }
+  }
+
+  @keyframes float-y {
+    0%,
+    100% {
+      transform: translateY(-3px);
+    }
+    50% {
+      transform: translateY(3px);
+    }
+  }
+
+  @keyframes march {
+    from {
+      stroke-dashoffset: 0;
+    }
+    to {
+      stroke-dashoffset: -28;
+    }
+  }
+
+  /* Seamless loop for a waveform drawn twice, side by side. */
+  @keyframes wave-scroll {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  /* Core-usage bars breathing between two widths. */
+  @keyframes bar-pulse {
+    from {
+      transform: scaleX(var(--bar-from, 0.35));
+    }
+    to {
+      transform: scaleX(var(--bar-to, 0.85));
+    }
+  }
+
+  /* Gauge ring fill on mount; target offset set per element. */
+  @keyframes ring-fill {
+    from {
+      stroke-dashoffset: var(--ring-c);
+    }
+    to {
+      stroke-dashoffset: var(--ring-target);
+    }
+  }
+
+  /* Fault-chip ticker: content duplicated once, loops seamlessly. */
+  @keyframes ticker {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  /* Checklist tick appearing on the phone mockup. */
+  @keyframes tick-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.15);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}
+
+/*
+ * Scroll reveal: visible by default (no-JS safe). The Reveal component
+ * adds .reveal-pending on mount, then .is-visible when intersecting.
+ */
+.reveal-pending {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.reveal-pending.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 500ms ease-out,
+    transform 500ms ease-out;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+/*
+ * Light theme: every component color flows through these variables
+ * (Tailwind v4 utilities reference them), so flipping the values here
+ * re-skins the whole app. Deliberately untouched: slate-950 (dark text
+ * on cyan buttons), the -400 solid fills (status dots, visible on both
+ * modes), black/white (overlays, photo stage).
+ */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-canvas: #edf1f6;
+  --color-panel: #ffffff;
+  --color-panel-elevated: #e9eef4;
+  --color-edge: #d6dee8;
+  --color-edge-strong: #b3bfce;
+
+  --color-slate-50: #0f172a;
+  --color-slate-100: #1e293b;
+  --color-slate-200: #334155;
+  --color-slate-300: #46566b;
+  --color-slate-400: #55677d;
+  --color-slate-500: #75849a;
+  --color-slate-600: #9aa7ba;
+  --color-slate-700: #c3cddb;
+  --color-slate-800: #dde4ee;
+  --color-slate-900: #edf1f6;
+
+  --color-cyan-200: #0e7490;
+  --color-cyan-300: #0e7490;
+  --color-emerald-200: #047857;
+  --color-emerald-300: #047857;
+  --color-amber-200: #92400e;
+  --color-amber-300: #b45309;
+  --color-red-200: #991b1b;
+  --color-red-300: #b91c1c;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: #e8ecf1;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-theme="light"] body {
+  color: #101828;
+}
+
+::selection {
+  background-color: rgb(34 211 238 / 0.3);
+}
+
+/* Consistent visible keyboard focus everywhere. */
+:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

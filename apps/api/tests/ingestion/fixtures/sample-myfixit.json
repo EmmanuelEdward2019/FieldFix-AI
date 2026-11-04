@@ -1,0 +1,50 @@
+[
+  {
+    "Title": "AcmeBook Pro 14 Battery Replacement",
+    "Ancestors": ["AcmeBook", "Laptop", "Root"],
+    "Guidid": 9001,
+    "Category": "AcmeBook Pro 14",
+    "Subject": "Battery",
+    "Url": "https://example.invalid/guides/acmebook-battery/9001",
+    "Steps": [
+      {
+        "Order": 1,
+        "Text_raw": "Power off the laptop and disconnect the AC adapter before touching the battery.",
+        "Lines": [
+          { "Text": "power off the laptop and disconnect the AC adapter before touching the battery ." }
+        ],
+        "Word_level_parts_clean": ["battery", "AC adapter"],
+        "StepId": 41001
+      },
+      {
+        "Order": 2,
+        "Text_raw": "Remove the bottom panel screws, then lift the panel to expose the battery connector.",
+        "Lines": [
+          { "Text": "remove the bottom panel screws ." },
+          { "Text": "lift the panel to expose the battery connector ." }
+        ],
+        "Word_level_parts_clean": ["bottom panel", "battery connector"],
+        "StepId": 41002
+      }
+    ]
+  },
+  {
+    "Title": "Acme Phone 12 Screen Replacement",
+    "Ancestors": ["Acme Phone", "Phone", "Root"],
+    "Guidid": 9002,
+    "Category": "Acme Phone 12",
+    "Subject": "Screen",
+    "Url": "https://example.invalid/guides/acme-phone-screen/9002",
+    "Steps": [
+      {
+        "Order": 1,
+        "Text_raw": "If the screen is lifting, the battery beneath may be swelling: stop and follow battery safety.",
+        "Lines": [
+          { "Text": "if the screen is lifting, the battery beneath may be swelling ." }
+        ],
+        "Word_level_parts_clean": ["screen", "battery"],
+        "StepId": 42001
+      }
+    ]
+  }
+]
