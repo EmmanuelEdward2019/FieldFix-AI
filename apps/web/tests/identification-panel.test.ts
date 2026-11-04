@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { AnnotationResponse, IdentificationResponse } from "@fieldfix/contracts";
 import {
   IdentificationPanel,
+  analysisAttention,
   type IdentificationState,
 } from "../components/workstation/identification-panel";
 import { SegmentationOverlay } from "../components/workstation/segmentation-layer";
@@ -56,64 +57,99 @@ function box(id: string, label: string): AnnotationResponse {
 const noop = () => undefined;
 
 describe("IdentificationPanel", () => {
-  it("invites a first pass when idle and never fetches by itself", () => {
+  it("runs automatically when idle instead of showing a trigger button", () => {
     const html = renderToString(
       React.createElement(IdentificationPanel, {
         state: state({ status: "idle", identification: null }),
-        selectedLabel: null,
-        onSelectLabel: noop,
         onLocalized: noop,
+        labelledCount: 0,
       }),
     );
-    expect(html).toContain("Identify components");
+    // The hook auto-starts the pass on a missing identification; the
+    // panel only narrates progress — there is no manual trigger.
+    expect(html).toContain("Identifying components automatically");
+    expect(html).not.toContain("<button");
     expect(html).not.toContain("Potential fault area");
   });
 
-  it("renders device, components, the visual hypothesis, and unknowns", () => {
+  it("summarizes graphically without a typed component list", () => {
     const html = renderToString(
       React.createElement(IdentificationPanel, {
         state: state({}),
-        selectedLabel: null,
-        onSelectLabel: noop,
         onLocalized: noop,
+        labelledCount: 1,
       }),
     );
     expect(html).toContain("Test Laptop 14");
-    expect(html).toContain("battery");
-    expect(html).toContain("cooling fan");
-    expect(html).toContain("High");
+    expect(html).toContain("2 named · 1 outlined on the photo above");
+    // Components live on the photo (circles, arrows, boxes) plus the
+    // tappable legend — the panel keeps only the device line, the
+    // framing chip, and the fault-area callout.
+    expect(html).not.toContain("cooling fan");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("Could not confidently identify");
+    expect(html).not.toContain("small bracket at the top edge");
     expect(html).toContain("Potential fault area:");
-    expect(html).toContain(">battery</p>");
     expect(html).toContain("Discolored connector.");
     expect(html).toContain("visual hypothesis only");
-    expect(html).toContain("Could not confidently identify");
-    expect(html).toContain("small bracket at the top edge");
   });
 
-  it("marks the selected component pressed", () => {
+  it("says so honestly when nothing could be outlined", () => {
     const html = renderToString(
       React.createElement(IdentificationPanel, {
         state: state({}),
-        selectedLabel: "battery",
-        onSelectLabel: noop,
         onLocalized: noop,
+        labelledCount: 0,
       }),
     );
-    expect(html).toContain("aria-pressed=\"true\"");
+    expect(html).toContain("none could be outlined on this photo");
+    expect(html).not.toContain("labelled on the photo above");
+  });
+
+  it("frames recognition as distinct from diagnosis", () => {
+    const html = renderToString(
+      React.createElement(IdentificationPanel, {
+        state: state({}),
+        onLocalized: noop,
+        labelledCount: 2,
+      }),
+    );
+    expect(html).toContain("Recognition — not a diagnosis");
   });
 
   it("explains failures with a retry action", () => {
     const html = renderToString(
       React.createElement(IdentificationPanel, {
         state: state({ status: "error", identification: null, message: "Vision down." }),
-        selectedLabel: null,
-        onSelectLabel: noop,
         onLocalized: noop,
+        labelledCount: 0,
       }),
     );
     expect(html).toContain("Component identification failed:");
     expect(html).toContain("Vision down.");
     expect(html).toContain("Retry");
+  });
+});
+
+describe("analysisAttention", () => {
+  const base = {
+    live: true,
+    identificationReady: true,
+    hypothesisCount: 0,
+    busy: false,
+    blocked: false,
+  };
+
+  it("lights up when identified with nothing diagnosed yet", () => {
+    expect(analysisAttention(base)).toBe(true);
+  });
+
+  it("stays calm when any precondition is missing", () => {
+    expect(analysisAttention({ ...base, live: false })).toBe(false);
+    expect(analysisAttention({ ...base, identificationReady: false })).toBe(false);
+    expect(analysisAttention({ ...base, hypothesisCount: 2 })).toBe(false);
+    expect(analysisAttention({ ...base, busy: true })).toBe(false);
+    expect(analysisAttention({ ...base, blocked: true })).toBe(false);
   });
 });
 

@@ -14,7 +14,15 @@ export function ReferencePanel({ citations, live = false }: ReferencePanelProps)
   return (
     <Card aria-labelledby="references-title">
       <CardHeader className="flex flex-row items-center justify-between gap-2">
-        <CardTitle id="references-title">Source references</CardTitle>
+        <div>
+          <CardTitle id="references-title">Source references</CardTitle>
+          {citations.length > 0 && (
+            <p className="mt-0.5 text-xs text-slate-400">
+              {citations.length} manual passage{citations.length === 1 ? "" : "s"} consulted
+              during diagnosis.
+            </p>
+          )}
+        </div>
         {live ? (
           <Badge variant="default">Live</Badge>
         ) : (

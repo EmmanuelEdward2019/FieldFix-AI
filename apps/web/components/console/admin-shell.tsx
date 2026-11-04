@@ -26,7 +26,7 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -102,7 +102,7 @@ const NAV: NavGroup[] = [
   },
 ];
 
-function NavList({ onNavigate, capabilities }: { onNavigate?: () => void; capabilities: string[] }) {
+function NavList({ onNavigate, capabilities }: { onNavigate?: (href: string) => void; capabilities: string[] }) {
   const pathname = usePathname();
   return (
     <nav className="flex flex-col gap-4 overflow-y-auto p-3" aria-label="Admin console">
@@ -123,7 +123,7 @@ function NavList({ onNavigate, capabilities }: { onNavigate?: () => void; capabi
                   <li key={href}>
                     <Link
                       href={href}
-                      onClick={onNavigate}
+                      onClick={() => onNavigate?.(href)}
                       aria-current={active ? "page" : undefined}
                       className={cn(
                         "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
@@ -184,10 +184,40 @@ function SignInGate({ serverError }: { serverError: string | null }) {
 /** Console chrome: capability-filtered sidebar, actor header, sign-in gate. */
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const { loading, me, error } = useAdminAuth();
+  const pathname = usePathname();
   const [drawer, setDrawer] = useState(false);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+
+  // Same instant navigation feedback as the app shell: slow
+  // transitions must never look like a dead click.
+  const beginNavigate = useCallback(
+    (href: string) => {
+      setPendingHref((current) => (href === pathname ? current : href));
+    },
+    [pathname],
+  );
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!pendingHref) {
+      return;
+    }
+    const timer = setTimeout(() => setPendingHref(null), 15000);
+    return () => clearTimeout(timer);
+  }, [pendingHref]);
 
   return (
     <div className="flex min-h-screen">
+      {pendingHref && (
+        <div
+          className="fixed inset-x-0 top-0 z-[70] h-0.5 bg-cyan-400/80 animate-pulse"
+          role="status"
+          aria-label="Loading page"
+        />
+      )}
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-edge bg-panel lg:flex" aria-label="Console navigation">
         <div className="flex items-center gap-2.5 border-b border-edge px-4 py-3">
           <span className="flex size-8 items-center justify-center rounded-md border border-edge bg-canvas">
@@ -197,7 +227,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           <Badge variant="warning">Admin</Badge>
         </div>
         {me ? (
-          <NavList capabilities={me.capabilities} />
+          <NavList capabilities={me.capabilities} onNavigate={beginNavigate} />
         ) : (
           <div className="flex flex-col gap-2 p-3" role="status" aria-label="Loading navigation">
             {[0, 1, 2, 3].map((i) => (
@@ -226,7 +256,13 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                 <SheetTitle>Admin console</SheetTitle>
                 <SheetDescription>Platform administration</SheetDescription>
                 {me && (
-                  <NavList capabilities={me.capabilities} onNavigate={() => setDrawer(false)} />
+                  <NavList
+                    capabilities={me.capabilities}
+                    onNavigate={(href) => {
+                      setDrawer(false);
+                      beginNavigate(href);
+                    }}
+                  />
                 )}
               </SheetContent>
             </Sheet>

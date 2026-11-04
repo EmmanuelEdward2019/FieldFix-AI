@@ -80,6 +80,8 @@ export interface WizardStartInput {
   model: string;
   os: string;
   symptoms: string;
+  problemStarted: string;
+  recentEvents: string;
   userMode: "everyday" | "technician";
   files: File[];
 }
@@ -94,6 +96,8 @@ interface WizardState {
   modelCustom: string;
   os: string;
   symptoms: string;
+  problemStarted: string;
+  recentEvents: string;
   userMode: "everyday" | "technician";
   files: File[];
 }
@@ -134,6 +138,8 @@ export function DiagnosisWizard({
     modelCustom: "",
     os: "",
     symptoms: "",
+    problemStarted: "",
+    recentEvents: "",
     userMode: "everyday",
     files: [],
   });
@@ -197,6 +203,8 @@ export function DiagnosisWizard({
     symptoms: state.customProblem.trim() !== "" && state.category === ""
       ? `${state.customProblem.trim()} — ${state.symptoms.trim()}`
       : state.symptoms.trim(),
+    problemStarted: state.problemStarted.trim(),
+    recentEvents: state.recentEvents.trim(),
     userMode: state.userMode,
     files: state.files,
   });
@@ -438,6 +446,34 @@ export function DiagnosisWizard({
               className={`${inputClass} mt-1 resize-y`}
             />
           </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="wizard-problem-started" className="text-xs font-medium text-slate-300">
+                When did it start? <span className="text-slate-500">(optional)</span>
+              </label>
+              <input
+                id="wizard-problem-started"
+                value={state.problemStarted}
+                onChange={(e) => patch({ problemStarted: e.target.value })}
+                placeholder="e.g. Yesterday evening, after the update"
+                maxLength={500}
+                className={`${inputClass} mt-1`}
+              />
+            </div>
+            <div>
+              <label htmlFor="wizard-recent-events" className="text-xs font-medium text-slate-300">
+                Recent events <span className="text-slate-500\">(optional)</span>
+              </label>
+              <input
+                id="wizard-recent-events"
+                value={state.recentEvents}
+                onChange={(e) => patch({ recentEvents: e.target.value })}
+                placeholder="e.g. Dropped last week, got wet, new charger"
+                maxLength={2000}
+                className={`${inputClass} mt-1`}
+              />
+            </div>
+          </div>
           <div>
             <p className="text-xs font-medium text-slate-300">
               Evidence photos & videos <span className="text-slate-500">(optional, up to {WIZARD_MAX_FILES})</span>
@@ -540,6 +576,16 @@ export function DiagnosisWizard({
                 {state.files.length === 0 ? "None" : `${state.files.length} attached`}
               </dd>
             </div>
+            {(state.problemStarted.trim() !== "" || state.recentEvents.trim() !== "") && (
+              <div className="flex gap-2">
+                <dt className="w-28 shrink-0 text-slate-500">History</dt>
+                <dd className="text-slate-100">
+                  {[state.problemStarted.trim(), state.recentEvents.trim()]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </dd>
+              </div>
+            )}
           </dl>
           {startError != null && (
             <p role="alert" className="mt-3 text-sm text-red-300">

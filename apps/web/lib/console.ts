@@ -4,6 +4,7 @@ import {
   adminDocumentResponseSchema,
   adminMeSchema,
   adminUserSchema,
+  bulkImportResponseSchema,
   healthCheckSchema,
   ingestionJobDetailResponseSchema,
   listAdminEvidenceResponseSchema,
@@ -288,6 +289,22 @@ export function consoleApi(token: string) {
       }).then((res) =>
         parseApiResponse(res, safeParseWith(adminDocumentResponseSchema), "Re-ingestion"),
       ) as Promise<AdminDocumentResponse>,
+    registerConnector: (
+      input: { connector: string; ref: string; limit?: number },
+      signal?: AbortSignal,
+    ) =>
+      request("/api/v1/admin/documents", {
+        method: "POST",
+        token,
+        body: input,
+        signal,
+      }).then((res) =>
+        parseApiResponse(
+          res,
+          safeParseWith(z.union([adminDocumentResponseSchema, bulkImportResponseSchema])),
+          "Connector import",
+        ),
+      ),
     ingestionJobs: (params: Record<string, string | number | undefined>, signal?: AbortSignal) =>
       get(
         `/api/v1/admin/ingestion-jobs${qs(params)}`,

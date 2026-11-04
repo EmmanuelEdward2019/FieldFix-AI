@@ -210,9 +210,18 @@ function safeStepsFor(triggers: HazardTrigger[], newState: SafetyState): string 
   return unique.join("\n").slice(0, 4000);
 }
 
+const CATEGORY_LABELS: Record<HazardCategory, string> = {
+  battery_swelling: "Battery swelling",
+  heat_fire: "Heat or fire",
+  electrical: "Electrical hazard",
+  liquid_damage: "Liquid damage",
+  physical_damage: "Physical damage",
+  general: "General hazard",
+};
+
 function describeTriggers(triggers: HazardTrigger[]): string {
   return triggers
-    .map((t) => `${t.category}/${t.severity}: "${t.excerpt}"`)
+    .map((t) => `${CATEGORY_LABELS[t.category]} (${t.severity}): "${t.excerpt}"`)
     .join("; ")
     .slice(0, 4000);
 }

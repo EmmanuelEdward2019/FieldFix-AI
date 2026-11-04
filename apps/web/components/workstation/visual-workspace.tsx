@@ -46,9 +46,10 @@ function Disclosure({ summary, children }: { summary: string; children: React.Re
 }
 
 /**
- * Evidence-first workspace composition. Default view prioritises the
- * device evidence, the suspected faults, the next recommended test,
- * and safety — everything else collapses into disclosures.
+ * Evidence-first workspace composition. The photo canvas sits above the
+ * next-test hero (recognition first, diagnosis second), the voice bar
+ * hangs directly under the hero it narrates, and everything past the
+ * hypotheses collapses into the side column or disclosures.
  */
 export function VisualWorkspace({
   session,
@@ -62,13 +63,18 @@ export function VisualWorkspace({
   const elevated =
     session.safety_state === "critical_stop" || session.safety_state === "review_required";
   const recorded = session.tests.filter((t) => t.result != null).length;
+  const blocked = session.tests.filter(
+    (t) => t.safety_classification === "blocked",
+  ).length;
 
   return (
     <div className="mx-auto flex w-full max-w-[100rem] flex-col gap-4 p-4 sm:p-6">
       {demoPicker}
       <SessionHeader session={session} live={isLive} />
       {elevated && <div>{panels.safety}</div>}
+      {panels.canvas}
       <NextAction session={session} live={nextLive} demo={demoNext} milestoneScope={milestoneScope} />
+      {panels.voice}
       {nextLive != null && (
         <TechnicianHandoffCta
           safetyState={session.safety_state}
@@ -79,16 +85,14 @@ export function VisualWorkspace({
 
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)]">
         <div className="flex min-w-0 flex-col gap-4">
-          {panels.canvas}
           {panels.hypotheses}
         </div>
         <div className="flex min-w-0 flex-col gap-4">
           {!elevated && <div>{panels.safety}</div>}
-          {panels.voice}
           {panels.refs}
           {panels.parts}
           <Disclosure
-            summary={`All tests (${recorded}/${session.tests.length} recorded)`}
+            summary={`All tests (${recorded}/${session.tests.length} recorded${blocked > 0 ? ` · ${blocked} unavailable` : ""})`}
           >
             {panels.checklist}
           </Disclosure>

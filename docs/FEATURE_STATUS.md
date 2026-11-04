@@ -11,6 +11,8 @@ under "implemented and tested" must not be presented as done.
   results → automatic reassessment → report (JSON + PDF).
 - Knowledge ingestion (PDF/JSON/CSV/text/Markdown, licensed
   connectors), full-text search, verbatim citation attach/resolution.
+  Analysis auto-consults approved manuals and cites the top passages
+  on the leading hypothesis; duplicate test proposals are skipped.
 - Deterministic safety controller: intake/upload screening,
   `critical_stop` loop block, technician recovery path, advisory
   model screen that can only raise review.

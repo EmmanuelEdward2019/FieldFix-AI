@@ -132,12 +132,20 @@ export class ChunkRepository {
 /**
  * Full-text search over indexed, approved documents only. Returns real
  * excerpts with document/page references — never fabricated citations.
+ * `match: "any"` ORs the query lexemes for natural-language recall
+ * (diagnosis auto-consult); the default ANDs them (user search).
+ * Headline markers are stripped — excerpts render as plain text.
  */
 export async function searchChunks(
   db: Db,
   query: KnowledgeSearch,
+  options: { match?: "all" | "any" } = {},
 ): Promise<KnowledgeSearchHit[]> {
   const { manufacturer, model, limit } = query;
+  const tsquery =
+    options.match === "any"
+      ? sql`to_tsquery('english', replace(plainto_tsquery('english', ${query.query})::text, '&', '|'))`
+      : sql`plainto_tsquery('english', ${query.query})`;
   const rows = await db
     .selectFrom("document_chunks as c")
     .innerJoin("technical_documents as d", "d.id", "c.document_id")
@@ -147,16 +155,12 @@ export async function searchChunks(
       "d.title as document_title",
       "c.page_number",
       "c.heading",
-      sql<string>`ts_headline('english', c.content, plainto_tsquery('english', ${query.query}))`.as(
+      sql<string>`replace(replace(ts_headline('english', c.content, ${tsquery}), '<b>', ''), '</b>', '')`.as(
         "excerpt",
       ),
-      sql<number>`ts_rank(c.search_vector, plainto_tsquery('english', ${query.query}))`.as(
-        "rank",
-      ),
+      sql<number>`ts_rank(c.search_vector, ${tsquery})`.as("rank"),
     ])
-    .where(
-      sql<boolean>`c.search_vector @@ plainto_tsquery('english', ${query.query})`,
-    )
+    .where(sql<boolean>`c.search_vector @@ ${tsquery}`)
     .where("d.permission_status", "=", "approved")
     .where("d.ingestion_status", "=", "indexed")
     .$if(manufacturer !== undefined, (qb) =>

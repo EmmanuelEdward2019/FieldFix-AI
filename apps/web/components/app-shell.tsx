@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -51,7 +51,7 @@ const SECONDARY_NAV = [
   { href: "/profile", label: "Profile", icon: UserRound },
 ];
 
-function NavList({ onNavigate }: { onNavigate: () => void }) {
+function NavList({ onNavigate }: { onNavigate: (href: string) => void }) {
   const pathname = usePathname();
   const isActive = (href: string) =>
     pathname === href || (href !== "/dashboard" && pathname.startsWith(`${href}/`));
@@ -62,7 +62,7 @@ function NavList({ onNavigate }: { onNavigate: () => void }) {
           <li key={href}>
             <Link
               href={href}
-              onClick={onNavigate}
+              onClick={() => onNavigate(href)}
               aria-current={isActive(href) ? "page" : undefined}
               className={cn(
                 "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
@@ -84,7 +84,7 @@ function NavList({ onNavigate }: { onNavigate: () => void }) {
             <li key={href}>
               <Link
                 href={href}
-                onClick={onNavigate}
+                onClick={() => onNavigate(href)}
                 aria-current={isActive(href) ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
@@ -111,15 +111,40 @@ function NavList({ onNavigate }: { onNavigate: () => void }) {
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { status, user, signOut } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
 
   useEffect(() => {
     if (status === "signed-out") {
       router.push("/login");
     }
   }, [status, router]);
+
+  // Instant navigation feedback: mark the target the moment a nav
+  // link is clicked so slow transitions (dev compile, slow
+  // networks) never look like a dead click. Clears when the route
+  // commits, or after a fallback timeout if it never does.
+  const beginNavigate = useCallback(
+    (href: string) => {
+      setPendingHref((current) => (href === pathname ? current : href));
+    },
+    [pathname],
+  );
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!pendingHref) {
+      return;
+    }
+    const timer = setTimeout(() => setPendingHref(null), 15000);
+    return () => clearTimeout(timer);
+  }, [pendingHref]);
 
   if (status === "loading") {
     return (
@@ -151,6 +176,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         Skip to content
       </a>
+      {pendingHref && (
+        <div
+          className="fixed inset-x-0 top-0 z-[70] h-0.5 bg-cyan-400/80 animate-pulse"
+          role="status"
+          aria-label="Loading page"
+        />
+      )}
 
       <aside className="hidden border-r border-edge bg-panel/40 lg:block" aria-label="Application">
         <div className="sticky top-0 flex h-screen flex-col gap-4 overflow-y-auto p-4">
@@ -162,7 +194,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               FieldFix AI
             </span>
           </Link>
-          <NavList onNavigate={() => undefined} />
+          <NavList onNavigate={beginNavigate} />
           <div className="mt-auto">
             <Button type="button" className="w-full" asChild>
               <Link href="/diagnostics/new">
@@ -195,7 +227,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   Application navigation.
                 </SheetDescription>
                 <div className="mt-4">
-                  <NavList onNavigate={() => setDrawerOpen(false)} />
+                  <NavList
+                    onNavigate={(href) => {
+                      setDrawerOpen(false);
+                      beginNavigate(href);
+                    }}
+                  />
                 </div>
                 <div className="mt-4">
                   <Button type="button" className="w-full" asChild>

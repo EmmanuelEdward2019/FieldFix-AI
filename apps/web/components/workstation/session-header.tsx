@@ -21,6 +21,11 @@ export function SessionHeader({ session, live = false }: SessionHeaderProps) {
     .filter(Boolean)
     .join(" ");
   const recorded = session.tests.filter((t) => t.result != null).length;
+  // Safety-blocked tests can never record a result; calling the count
+  // out keeps "In progress" from looking stuck when it is actually done.
+  const blocked = session.tests.filter(
+    (t) => t.safety_classification === "blocked",
+  ).length;
 
   return (
     <section
@@ -63,9 +68,15 @@ export function SessionHeader({ session, live = false }: SessionHeaderProps) {
               label={`${recorded} of ${session.tests.length} tests recorded`}
             />
             <span className="text-xs text-slate-300">
-              Tests
+              Tests: {recorded}/{session.tests.length}
               <span className="block text-[11px] text-slate-500">
-                {recorded === session.tests.length ? "All recorded" : "In progress"}
+                {blocked > 0
+                  ? `${blocked} unavailable on safety grounds`
+                  : recorded === 0
+                    ? "No results recorded yet"
+                    : recorded === session.tests.length
+                      ? "All recorded"
+                      : "Recording results"}
               </span>
             </span>
           </div>

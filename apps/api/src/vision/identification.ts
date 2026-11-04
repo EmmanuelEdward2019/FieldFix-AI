@@ -19,6 +19,7 @@ import { EvidenceFileRepository } from "../db/repositories/evidence.js";
 import { StorageNotFoundError, type StorageAdapter } from "../storage/types.js";
 import { ModelError, type ModelProvider } from "../models/types.js";
 import { SegmentationError, SegmentationService } from "./service.js";
+import { defaultComponents } from "./components.js";
 
 /**
  * Visual device/component identification: an additive intelligence
@@ -190,6 +191,36 @@ export class IdentificationService {
           err instanceof SegmentationError
             ? `Component localization skipped: ${err.message}`
             : "Component localization skipped unexpectedly.",
+        );
+      }
+    }
+
+    // Fallback: vision sometimes names parts SAM cannot ground
+    // ("metal shielding cover" on a wide bench shot). When nothing
+    // localized, sweep the deterministic device vocabulary so the
+    // photo still gets SAM boxes instead of a bare image. Annotated
+    // labels then come from these prompts, never from model output.
+    if (annotations.length === 0 && this.deps.segmentation) {
+      try {
+        const fallback = await this.deps.segmentation.segment(
+          sessionId,
+          fileId,
+          defaultComponents(session.device_type),
+        );
+        annotations = fallback.annotations;
+        conceptsUsed = [...conceptsUsed, ...fallback.conceptsUsed];
+        segmentRuns.push(...fallback.runs);
+        if (fallback.annotations.length > 0) {
+          warnings.push(
+            "Named parts could not be grounded, so generic device parts were outlined instead.",
+          );
+        }
+        warnings.push(...fallback.warnings);
+      } catch (err) {
+        warnings.push(
+          err instanceof SegmentationError
+            ? `Generic outline sweep skipped: ${err.message}`
+            : "Generic outline sweep skipped unexpectedly.",
         );
       }
     }

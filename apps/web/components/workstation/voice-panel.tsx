@@ -72,6 +72,11 @@ export interface VoiceLiveActions {
 interface VoicePanelProps {
   session: DemoSession;
   live?: VoiceLiveActions;
+  /**
+   * Bar layout under the next-test hero: skips the echoed instruction
+   * (the hero already shows it) and packs the controls tighter.
+   */
+  compact?: boolean;
 }
 
 /** Prefer the capture message for capture failures, API text otherwise. */
@@ -107,11 +112,11 @@ interface Draft {
  * endpoint); demo mode shows an honest placeholder and never calls
  * the API or touches the microphone.
  */
-export function VoicePanel({ session, live }: VoicePanelProps) {
+export function VoicePanel({ session, live, compact = false }: VoicePanelProps) {
   if (!live) {
     return <VoiceDemoCard />;
   }
-  return <VoiceLivePanel session={session} live={live} />;
+  return <VoiceLivePanel session={session} live={live} compact={compact} />;
 }
 
 function VoiceDemoCard() {
@@ -141,9 +146,11 @@ function VoiceDemoCard() {
 function VoiceLivePanel({
   session,
   live,
+  compact,
 }: {
   session: DemoSession;
   live: VoiceLiveActions;
+  compact: boolean;
 }) {
   const [settings, setSettings] = useState<SettingsState>({ status: "loading" });
   const [reloadCounter, setReloadCounter] = useState(0);
@@ -616,7 +623,7 @@ function VoiceLivePanel({
     session.safety_events[session.safety_events.length - 1];
 
   return (
-    <Card aria-labelledby="voice-title">
+    <Card aria-labelledby="voice-title" className={compact ? "gap-3" : undefined}>
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <CardTitle id="voice-title" className="flex items-center gap-2">
           <Mic className="size-4 text-cyan-300" aria-hidden />
@@ -648,7 +655,7 @@ function VoiceLivePanel({
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+      <CardContent className={compact ? "flex flex-col gap-3" : "flex flex-col gap-4"}>
         {guidance.kind === "critical_stop" && (
           <div
             role="alert"
@@ -720,7 +727,7 @@ function VoiceLivePanel({
           </p>
         )}
 
-        {step && !halted && (
+        {!compact && step && !halted && (
           <section aria-label="Current voice instruction">
             <p className="text-xs font-semibold tracking-wide text-cyan-300 uppercase">
               Test {step.stepNumber} of {step.total}

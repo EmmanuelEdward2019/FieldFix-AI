@@ -125,6 +125,22 @@ describe("VoicePanel live mode", () => {
     expect(html).toContain("All tests are recorded");
   });
 
+  it("skips the echoed instruction in compact bar mode", () => {
+    const step = nextGuidedTest(demo.tests);
+    if (!step) {
+      throw new Error("demo fixture needs an unrecorded test");
+    }
+    const html = renderToString(
+      React.createElement(VoicePanel, { session: demo, live: LIVE, compact: true }),
+    );
+    // The bar keeps its identity and mute control, but the instruction
+    // echo stays with the hero card above it.
+    expect(html).toContain("Voice guidance");
+    expect(html).toContain("Turn spoken responses off");
+    expect(html).not.toContain(step.test.name);
+    expect(html).not.toMatch(/Test \d+ of/);
+  });
+
   it("never claims translation or server-generated audio", () => {
     const html = renderToString(
       React.createElement(VoicePanel, { session: demo, live: LIVE }),

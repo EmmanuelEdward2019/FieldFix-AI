@@ -46,8 +46,9 @@ export function ActivityFeed({ events, modelRuns, live = false }: ActivityFeedPr
           <Badge variant="warning">Demo events</Badge>
         )}
       </CardHeader>
-      <CardContent className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_280px]">
-        <div>
+      {/* Single column: this card always lives in the narrow side column. */}
+      <CardContent className="grid grid-cols-1 gap-5">
+        <div className="min-w-0">
           <h3 className="text-xs font-semibold tracking-wider text-slate-400 uppercase">
             Session events
           </h3>
@@ -99,7 +100,7 @@ export function ActivityFeed({ events, modelRuns, live = false }: ActivityFeedPr
           )}
         </div>
 
-        <div>
+        <div className="min-w-0">
           <h3 className="text-xs font-semibold tracking-wider text-slate-400 uppercase">
             Model runs
           </h3>
@@ -150,7 +151,9 @@ function EventPayload({ event }: { event: DemoEvent }) {
   return (
     <dl className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-400">
       {entries.slice(0, 4).map(([key, value]) => (
-        <div key={key} className="flex gap-1">
+        // Capped so long ids / JSON payloads clip inside the card
+        // instead of painting past the side column.
+        <div key={key} className="flex min-w-0 max-w-full gap-1">
           <dt className="text-slate-500">{humanize(key)}:</dt>
           <dd className="max-w-48 truncate font-mono text-[11px]">
             {typeof value === "string" ? value : JSON.stringify(value)}

@@ -103,6 +103,27 @@ describe("live panel actions", () => {
     expect(demoHtml).not.toContain("Run AI analysis");
   });
 
+  it("withholds the analysis prompt until identification lands", () => {
+    // Server render never observes the readiness event, so the prompt
+    // and animation stay off by default; they switch on live in the
+    // browser once the photo reports named components.
+    const html = renderToString(
+      React.createElement(HypothesisPanel, {
+        hypotheses: [],
+        live: {
+          sessionId: demo.id,
+          token: "tok",
+          safetyBlocked: false,
+          userMode: "everyday",
+          onChanged: () => undefined,
+        },
+      }),
+    );
+    expect(html).toContain("Run AI analysis");
+    expect(html).not.toContain("Components identified above");
+    expect(html).not.toContain("animate-attention");
+  });
+
   it("gates safety transitions behind technician mode", () => {
     const techHtml = renderToString(
       React.createElement(SafetyStatus, {

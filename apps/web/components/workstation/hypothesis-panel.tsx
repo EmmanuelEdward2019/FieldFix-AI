@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Brain, ChevronDown, Lightbulb, Minus, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, Brain, ChevronDown, Lightbulb, Minus, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { AnalysisLoader } from "../fx/analysis-loader";
 import type { DemoLoopActions } from "./demo-actions";
 import { EmptyState } from "./empty-state";
+import { analysisAttention, useIdentificationReady } from "./identification-panel";
 import {
   confidenceValue,
   confidenceVariant,
@@ -46,6 +47,15 @@ interface HypothesisPanelProps {
 export function HypothesisPanel({ hypotheses, live, demo, deviceType = "laptop", milestoneScope }: HypothesisPanelProps) {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const identificationReady = useIdentificationReady();
+  const attention = analysisAttention({
+    live: live != null,
+    identificationReady,
+    hypothesisCount: hypotheses.length,
+    busy: analyzing,
+    blocked: live?.safetyBlocked ?? true,
+  });
 
   const runAnalysis = () => {
     if (!live || analyzing) {
@@ -53,9 +63,11 @@ export function HypothesisPanel({ hypotheses, live, demo, deviceType = "laptop",
     }
     setAnalyzing(true);
     setError(null);
+    setWarnings([]);
     void analyzeSessionApi(live.sessionId, live.token).then(
-      () => {
+      (res) => {
         setAnalyzing(false);
+        setWarnings(res.warnings ?? []);
         if (milestoneScope) {
           recordMilestone(milestoneScope, "analysis_run");
         }
@@ -71,7 +83,18 @@ export function HypothesisPanel({ hypotheses, live, demo, deviceType = "laptop",
   return (
     <Card aria-labelledby="hypotheses-title">
       <CardHeader className="flex flex-row items-center justify-between gap-2">
-        <CardTitle id="hypotheses-title">Hypotheses</CardTitle>
+        <div>
+          <p className="text-xs font-semibold tracking-wide text-cyan-300 uppercase">
+            Step 2 · Diagnosis — what might be wrong
+          </p>
+          <CardTitle id="hypotheses-title" className="mt-0.5">
+            Hypotheses
+          </CardTitle>
+          <p className="mt-0.5 text-xs text-slate-400">
+            Possible causes inferred from the evidence — recognition names the
+            parts, this weighs what may be wrong with them.
+          </p>
+        </div>
         {live ? (
           <Badge variant="default">Live</Badge>
         ) : (
@@ -110,12 +133,23 @@ export function HypothesisPanel({ hypotheses, live, demo, deviceType = "laptop",
         )}
         {live && (
           <div className="flex flex-col gap-2">
+            {attention && (
+              <p className="flex items-center gap-1.5 text-xs font-medium text-cyan-200">
+                <ArrowDown className="size-3.5 shrink-0" aria-hidden />
+                Components identified above — run analysis to find what might be wrong.
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <Button
                 type="button"
                 size="sm"
                 onClick={runAnalysis}
                 disabled={analyzing || live.safetyBlocked}
+                className={
+                  attention
+                    ? "ring-2 ring-cyan-300 ring-offset-2 ring-offset-panel motion-safe:animate-attention"
+                    : undefined
+                }
               >
                 <Brain aria-hidden />
                 {analyzing ? "Analysing…" : "Run AI analysis"}
@@ -130,6 +164,15 @@ export function HypothesisPanel({ hypotheses, live, demo, deviceType = "laptop",
               <p role="alert" className="text-xs text-red-300">
                 Analysis failed: {error}
               </p>
+            )}
+            {warnings.length > 0 && (
+              <ul className="flex flex-col gap-0.5" role="list" aria-label="Analysis notices">
+                {warnings.map((warning, i) => (
+                  <li key={i} className="text-[11px] text-slate-500">
+                    · {warning}
+                  </li>
+                ))}
+              </ul>
             )}
             {analyzing && (
               <AnalysisLoader
@@ -150,15 +193,23 @@ export function HypothesisPanel({ hypotheses, live, demo, deviceType = "laptop",
                 ? "Possible causes will appear here once you run AI analysis on this session's evidence."
                 : "Possible causes will appear here once evidence is analysed. Demo analysis is illustrative only."
             }
+            scene={deviceType}
           />
         ) : (
-          <ul className="flex flex-col gap-3" role="list">
-            {hypotheses.map((hypothesis) => (
-              <li key={hypothesis.id}>
-                <HypothesisCard hypothesis={hypothesis} live={live} milestoneScope={milestoneScope} />
-              </li>
-            ))}
-          </ul>
+          <div className="flex flex-col gap-2">
+            <p className="flex items-start gap-1.5 rounded-md border border-edge bg-canvas px-3 py-2 text-xs text-slate-400">
+              <ArrowUp className="mt-0.5 size-3.5 shrink-0 text-cyan-300" aria-hidden />
+              No need to pick one — run the recommended test above. Each
+              recorded result narrows these causes automatically.
+            </p>
+            <ul className="flex flex-col gap-3" role="list">
+              {hypotheses.map((hypothesis) => (
+                <li key={hypothesis.id}>
+                  <HypothesisCard hypothesis={hypothesis} live={live} milestoneScope={milestoneScope} />
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </CardContent>
     </Card>

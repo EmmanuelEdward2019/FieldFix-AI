@@ -88,6 +88,10 @@ export function DashboardShell(props: DashboardShellProps) {
   const [analysisStep, setAnalysisStep] = useState(0);
   const [recordingId, setRecordingId] = useState<string | null>(null);
   const demoTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const knownEvidenceIds = useRef<{ seeded: boolean; ids: Set<string> }>({
+    seeded: false,
+    ids: new Set(),
+  });
 
   const isLive = props.mode === "live";
   const liveToken = props.mode === "live" ? props.token : null;
@@ -174,6 +178,7 @@ export function DashboardShell(props: DashboardShellProps) {
     setSessionId(id);
     setSelectedFileId(null);
     setActiveTestId(null);
+    knownEvidenceIds.current = { seeded: false, ids: new Set() };
   }, []);
 
   const mutateDemoSession = useCallback(
@@ -244,6 +249,44 @@ export function DashboardShell(props: DashboardShellProps) {
     [isLive, recordingId, sessionId, mutateDemoSession],
   );
 
+  // Derived before the early returns: hooks below must run on every
+  // render, including the loading skeletons.
+  const demoSessions = !isLive && loadState.status === "ready" ? loadState.sessions : [];
+  const demoSession =
+    demoSessions.find((s) => s.id === sessionId) ?? demoSessions[0];
+  const liveSession =
+    isLive && detail.status === "ready"
+      ? toWorkstationSession(detail.detail)
+      : null;
+  const session = isLive ? liveSession : (demoSession ?? null);
+  const evidenceSignature = session?.evidence.map((f) => f.id).join(",") ?? "";
+
+  // New uploads select themselves: when a refresh introduces unseen
+  // evidence ids, the newest upload becomes the viewed file. The first
+  // load only seeds the set so the default view is unchanged.
+  useEffect(() => {
+    if (session == null) {
+      return;
+    }
+    const known = knownEvidenceIds.current;
+    if (!known.seeded) {
+      known.seeded = true;
+      known.ids = new Set(session.evidence.map((f) => f.id));
+      return;
+    }
+    const fresh = session.evidence.filter((f) => !known.ids.has(f.id));
+    known.ids = new Set(session.evidence.map((f) => f.id));
+    if (fresh.length === 0) {
+      return;
+    }
+    const newest = [...fresh].sort((a, b) =>
+      a.createdAt < b.createdAt ? 1 : -1,
+    )[0];
+    if (newest) {
+      setSelectedFileId(newest.id);
+    }
+  }, [session, evidenceSignature]);
+
   if (!isLive && loadState.status === "loading") {
     return <DashboardSkeleton />;
   }
@@ -267,15 +310,6 @@ export function DashboardShell(props: DashboardShellProps) {
       </div>
     );
   }
-
-  const demoSessions = !isLive && loadState.status === "ready" ? loadState.sessions : [];
-  const demoSession =
-    demoSessions.find((s) => s.id === sessionId) ?? demoSessions[0];
-  const liveSession =
-    isLive && detail.status === "ready"
-      ? toWorkstationSession(detail.detail)
-      : null;
-  const session = isLive ? liveSession : (demoSession ?? null);
 
   const mainContent = (() => {
     if (isLive && (detail.status === "loading" || detail.status === "idle")) {
@@ -411,9 +445,9 @@ export function DashboardShell(props: DashboardShellProps) {
         ),
       voice:
         liveActions != null ? (
-          <VoicePanel session={session} live={liveActions} />
+          <VoicePanel session={session} live={liveActions} compact />
         ) : (
-          <VoicePanel session={session} />
+          <VoicePanel session={session} compact />
         ),
       parts: <PartsPanel live={liveActions} />,
     };

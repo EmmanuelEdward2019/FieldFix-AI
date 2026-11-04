@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  ChevronDown,
   Eye,
   EyeOff,
   FileImage,
   FileVideo,
   ImagePlus,
   RotateCcw,
-  ScanSearch,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -23,13 +23,18 @@ import type {
   DemoEvidenceFile,
   DemoObservation,
 } from "@/lib/demo-data";
+import { legendLabels } from "@/lib/segmentation";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "./empty-state";
 import { IdentificationPanel, useIdentification } from "./identification-panel";
 import {
+  SegmentationLabels,
+  SegmentationLeaders,
   SegmentationLegend,
   SegmentationOverlay,
+  labelCallouts,
   useSegmentations,
+  type CalloutComponent,
 } from "./segmentation-layer";
 import { humanize, processingVariant } from "./status-badges";
 
@@ -87,21 +92,66 @@ export function EvidenceCanvas({
     live?.token ?? "",
     file?.id ?? "",
     live != null && file != null && !isVideo,
+    // A photo without an identification starts its pass on its own —
+    // there is no manual trigger. Videos and demos never auto-run.
+    live != null && file != null && !isVideo,
   );
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   useEffect(() => {
     setSelectedLabel(null);
   }, [file?.id]);
   const liveAnnotationCount = live ? segmentation.annotations.length : file?.annotations.length ?? 0;
+  // Instant beam: on from the first paint while vision + SAM work, off
+  // once the pass settles. Videos never scan — no still frame to ground.
+  const scanning =
+    live != null &&
+    !isVideo &&
+    (identification.status === "loading" ||
+      identification.status === "identifying" ||
+      segmentation.status === "segmenting");
+  const calloutComponents = identification.identification?.components ?? [];
+  // Files that already received the vision-failure sweep. The identify
+  // pass localizes names itself (plus a server-side generic sweep), so
+  // the client sweep below only fires when vision itself failed.
+  const sweepAttempted = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (live == null || file == null || isVideo) {
+      return;
+    }
+    if (identification.status !== "error") {
+      return;
+    }
+    if (segmentation.status !== "ready" || segmentation.annotations.length > 0) {
+      return;
+    }
+    if (sweepAttempted.current.has(file.id)) {
+      return;
+    }
+    sweepAttempted.current.add(file.id);
+    segmentation.segment();
+  }, [
+    live,
+    file,
+    isVideo,
+    identification.status,
+    segmentation.status,
+    segmentation.annotations.length,
+    segmentation.segment,
+  ]);
 
   return (
     <Card aria-labelledby="evidence-canvas-title">
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <div>
-          <CardTitle id="evidence-canvas-title">Evidence canvas</CardTitle>
+          <p className="text-xs font-semibold tracking-wide text-cyan-300 uppercase">
+            Step 1 · Recognition — what FieldFix sees
+          </p>
+          <CardTitle id="evidence-canvas-title" className="mt-0.5">
+            Evidence canvas
+          </CardTitle>
           <p className="mt-0.5 text-xs text-slate-400">
             {live
-              ? "Your uploaded photos and videos, stored privately."
+              ? "Your uploaded photos and videos, stored privately. Components are named and outlined here; what might be wrong with them comes later, under Hypotheses."
               : "Demo illustration — a stand-in drawing, not device evidence."}
           </p>
         </div>
@@ -150,13 +200,34 @@ export function EvidenceCanvas({
                     showAnnotations &&
                     segmentation.imageWidth != null &&
                     segmentation.imageHeight != null && (
-                      <SegmentationOverlay
-                        annotations={segmentation.annotations}
-                        imageWidth={segmentation.imageWidth}
-                        imageHeight={segmentation.imageHeight}
-                        highlightLabel={selectedLabel}
-                      />
+                      <>
+                        <SegmentationOverlay
+                          annotations={segmentation.annotations}
+                          imageWidth={segmentation.imageWidth}
+                          imageHeight={segmentation.imageHeight}
+                          highlightLabel={selectedLabel}
+                        />
+                        <SegmentationLeaders
+                          callouts={labelCallouts(
+                            segmentation.annotations,
+                            segmentation.imageWidth,
+                            segmentation.imageHeight,
+                            calloutComponents,
+                          )}
+                          imageWidth={segmentation.imageWidth}
+                          imageHeight={segmentation.imageHeight}
+                          highlightLabel={selectedLabel}
+                        />
+                        <SegmentationLabels
+                          annotations={segmentation.annotations}
+                          imageWidth={segmentation.imageWidth}
+                          imageHeight={segmentation.imageHeight}
+                          highlightLabel={selectedLabel}
+                          components={calloutComponents}
+                        />
+                      </>
                     )}
+                  {live && scanning && <ScanBeam />}
                 </div>
               </div>
             </div>
@@ -208,23 +279,6 @@ export function EvidenceCanvas({
                 )}
                 Annotations ({liveAnnotationCount})
               </Button>
-              {live && !isVideo && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={segmentation.segment}
-                  disabled={
-                    segmentation.status === "loading" ||
-                    segmentation.status === "segmenting"
-                  }
-                >
-                  <ScanSearch aria-hidden />
-                  {segmentation.status === "segmenting"
-                    ? "Locating…"
-                    : "Locate components"}
-                </Button>
-              )}
               {live && isVideo && (
                 <span className="text-xs text-slate-500">
                   Component identification and localization work on photos; videos play back for review.
@@ -241,18 +295,29 @@ export function EvidenceCanvas({
                 status={segmentation.status}
                 count={segmentation.annotations.length}
                 skipped={segmentation.skipped}
+                identifying={
+                  identification.status === "loading" ||
+                  identification.status === "identifying"
+                }
                 message={segmentation.message}
-                onRetry={segmentation.retry}
+                onRetry={() => {
+                  // A manual retry re-arms the vision-failure sweep so a
+                  // failed outline pass gets one more automatic attempt.
+                  sweepAttempted.current.delete(file.id);
+                  segmentation.retry();
+                }}
                 annotations={segmentation.annotations}
+                selectedLabel={selectedLabel}
+                onSelectLabel={setSelectedLabel}
+                components={calloutComponents}
               />
             )}
 
             {live && !isVideo && (
               <IdentificationPanel
                 state={identification}
-                selectedLabel={selectedLabel}
-                onSelectLabel={setSelectedLabel}
                 onLocalized={segmentation.retry}
+                labelledCount={legendLabels(segmentation.annotations).length}
               />
             )}
 
@@ -289,11 +354,34 @@ export function EvidenceCanvas({
               </ul>
             )}
 
-            <ObservationsList observations={observations} />
+            <ObservationsList
+              observations={observations}
+              modelBadge={live ? "Model" : "Model · demo"}
+            />
           </>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Light beam sweeping the photo while vision + SAM 3.1 identify
+ * components. Status theatre over the live image — the panel below
+ * narrates the same state as text for assistive tech.
+ */
+function ScanBeam() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute inset-x-0 top-0 motion-safe:animate-scan-y">
+        <div className="h-24 bg-linear-to-b from-transparent via-cyan-300/45 to-transparent" />
+        <div className="-mt-12 h-1 bg-cyan-100 shadow-[0_0_32px_10px_rgba(103,232,249,0.9)]" />
+        <div className="mt-1 h-px bg-cyan-200/70 shadow-[0_0_16px_4px_rgba(103,232,249,0.7)]" />
+      </div>
+      <p className="absolute top-2 left-1/2 -translate-x-1/2 rounded-full border border-cyan-200/60 bg-slate-950/85 px-3 py-1 text-[11px] font-bold tracking-wider text-cyan-100 uppercase motion-safe:animate-pulse-soft">
+        Scanning photo
+      </p>
+    </div>
   );
 }
 
@@ -413,16 +501,25 @@ function SegmentationStatus({
   status,
   count,
   skipped,
+  identifying,
   message,
   onRetry,
   annotations,
+  selectedLabel,
+  onSelectLabel,
+  components,
 }: {
   status: "loading" | "ready" | "segmenting" | "error";
   count: number;
   skipped: number;
+  /** Vision pass still running: the list may be empty only for now. */
+  identifying: boolean;
   message: string | null;
   onRetry: () => void;
   annotations: Parameters<typeof SegmentationLegend>[0]["annotations"];
+  selectedLabel: string | null;
+  onSelectLabel: (label: string | null) => void;
+  components: CalloutComponent[];
 }) {
   if (status === "error") {
     return (
@@ -438,33 +535,69 @@ function SegmentationStatus({
       </div>
     );
   }
+  const producers = [
+    ...new Set(
+      annotations
+        .map((a) => a.producer)
+        .filter((p): p is string => typeof p === "string" && p.length > 0),
+    ),
+  ];
   return (
     <div className="flex flex-col gap-2" aria-live="polite">
       <p className="text-xs text-slate-400">
-        {status === "loading" || status === "segmenting"
-          ? "Locating components…"
-          : count === 0
-            ? "No component regions yet — use “Locate components” to mark parts on this photo. Regions only, not a diagnosis."
-            : `${count} component region${count === 1 ? "" : "s"} located (regions only, not a diagnosis).`}
+        {status === "loading" || status === "segmenting" || identifying ? (
+          "Locating components…"
+        ) : count === 0 ? (
+          "SAM 3.1 found no parts it could outline on this photo — every new photo is scanned automatically. Regions only, not a diagnosis."
+        ) : (
+          <>
+            <strong className="font-semibold text-slate-100">
+              {count} component region{count === 1 ? "" : "s"} located
+              {producers.length > 0 ? ` by ${producers.join(", ")}` : ""}
+            </strong>{" "}
+            (regions only, not a diagnosis).
+          </>
+        )}
         {skipped > 0 &&
           ` ${skipped} region${skipped === 1 ? " was" : "s were"} returned without usable geometry and hidden.`}
         {message != null && status === "ready" && count > 0 ? ` ${message}` : null}
       </p>
-      {count > 0 && <SegmentationLegend annotations={annotations} />}
+      {count > 0 && (
+        <SegmentationLegend
+          annotations={annotations}
+          selectedLabel={selectedLabel}
+          onSelectLabel={onSelectLabel}
+          components={components}
+        />
+      )}
     </div>
   );
 }
 
-function ObservationsList({ observations }: { observations: DemoObservation[] }) {
+function ObservationsList({
+  observations,
+  modelBadge,
+}: {
+  observations: DemoObservation[];
+  /** Label for model-sourced observations: live sessions say Model, demos stay marked. */
+  modelBadge: string;
+}) {
   if (observations.length === 0) {
     return null;
   }
+  // Collapsed by default: the same observations appear in full in the
+  // repair report below, so the canvas keeps only the photo story.
   return (
-    <div>
-      <h3 className="text-xs font-semibold tracking-wider text-slate-400 uppercase">
-        Observations
-      </h3>
-      <ul className="mt-2 flex flex-col gap-2" role="list">
+    <details className="group rounded-lg border border-edge bg-panel">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-slate-300 [&::-webkit-details-marker]:hidden">
+        <ChevronDown
+          className="size-3.5 shrink-0 text-slate-500 transition-transform group-open:rotate-180"
+          aria-hidden
+        />
+        Observations ({observations.length})
+        <span className="font-normal text-slate-500">· also in the report below</span>
+      </summary>
+      <ul className="flex flex-col gap-2 border-t border-edge p-3" role="list">
         {observations.map((obs) => (
           <li
             key={obs.id}
@@ -472,7 +605,7 @@ function ObservationsList({ observations }: { observations: DemoObservation[] })
           >
             <span className="flex items-center gap-2">
               <Badge variant={obs.source === "model" ? "default" : "secondary"}>
-                {obs.source === "model" ? "Model · demo" : "User"}
+                {obs.source === "model" ? modelBadge : "User"}
               </Badge>
               <span className="text-[11px] text-slate-500">
                 {formatRelativeTime(obs.createdAt)}
@@ -482,7 +615,7 @@ function ObservationsList({ observations }: { observations: DemoObservation[] })
           </li>
         ))}
       </ul>
-    </div>
+    </details>
   );
 }
 

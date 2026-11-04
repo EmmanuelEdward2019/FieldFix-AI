@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, FileText, Mail, RotateCcw } from "lucide-react";
+import { BookOpen, Brain, ClipboardCheck, Download, Eye, FileText, Mail, RotateCcw } from "lucide-react";
 import type { ReportResponse } from "@fieldfix/contracts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -171,6 +171,24 @@ export function ReportPanel({
   );
 }
 
+function ProvenanceChip({
+  icon: Icon,
+  count,
+  label,
+}: {
+  icon: typeof Eye;
+  count: number;
+  label: string;
+}) {
+  return (
+    <li className="flex items-center gap-1.5 rounded-md border border-edge bg-canvas px-2.5 py-1.5 text-xs text-slate-200">
+      <Icon className="size-4 text-cyan-300" aria-hidden />
+      <strong className="font-semibold tabular-nums">{count}</strong>
+      <span className="text-slate-400">{label}</span>
+    </li>
+  );
+}
+
 export function ReportBody({ report }: { report: ReportResponse }) {
   const data = report.report_data;
   return (
@@ -187,6 +205,19 @@ export function ReportBody({ report }: { report: ReportResponse }) {
         <p>
           <span className="font-semibold tracking-wider uppercase">Generated: </span>
           <span className="text-slate-200">{formatDateTime(report.created_at)}</span>
+        </p>
+      </div>
+
+      <div>
+        <ul aria-label="Evidence and provenance" className="flex flex-wrap gap-1.5" role="list">
+          <ProvenanceChip icon={Eye} count={data.observable_facts.length} label="observations" />
+          <ProvenanceChip icon={Brain} count={data.hypotheses.length} label="hypotheses" />
+          <ProvenanceChip icon={ClipboardCheck} count={data.tests_performed.length} label="tests performed" />
+          <ProvenanceChip icon={BookOpen} count={data.sources.length} label="references" />
+        </ul>
+        <p className="mt-1.5 text-xs text-slate-500">
+          Provenance at a glance — every figure comes from stored session state,
+          detailed in the sections below.
         </p>
       </div>
 

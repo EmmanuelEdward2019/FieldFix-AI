@@ -274,6 +274,15 @@ function TestCard({
           Result capture is disabled: this session is in critical stop. Resolve
           the safety state before running guided tests.
         </p>
+      ) : test.safety_classification === "blocked" ? (
+        <p
+          role="note"
+          className="flex items-start gap-2 rounded-md border border-amber-400/30 bg-amber-400/5 px-3 py-2.5 text-xs text-amber-200"
+        >
+          <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+          Blocked on safety grounds — results cannot be recorded for this
+          test. A technician can review it.
+        </p>
       ) : (
         <form onSubmit={submit} className="flex flex-col gap-3">
           <fieldset>

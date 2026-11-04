@@ -74,6 +74,8 @@ class FakeSegmentationProvider implements SegmentationProvider {
   readonly id = "fake-sam";
   calls: SegmentCallInput[] = [];
   objects: SegmentationResult["objects"] = [];
+  /** Per-call results consumed in order; falls back to `objects` when empty. */
+  objectQueue: SegmentationResult["objects"][] = [];
   failure: ModelError | null = null;
 
   async segment(input: SegmentCallInput): Promise<SegmentationResult> {
@@ -81,7 +83,8 @@ class FakeSegmentationProvider implements SegmentationProvider {
     if (this.failure) {
       throw this.failure;
     }
-    return { model: "fake-sam-1", objects: this.objects, warnings: [], latencyMs: 5, attempts: 1 };
+    const objects = this.objectQueue.shift() ?? this.objects;
+    return { model: "fake-sam-1", objects, warnings: [], latencyMs: 5, attempts: 1 };
   }
 }
 
@@ -228,6 +231,22 @@ describe("identification routes", () => {
     expect(runs.some((r) => r.task_type === "identification" && r.status === "succeeded")).toBe(true);
   });
 
+  it("falls back to the generic device sweep when names do not ground", async () => {
+    const { id, token } = await createSession();
+    const fileId = await uploadImage(id, token);
+    // Named concepts find nothing; the generic laptop sweep finds the
+    // battery object on its first concept.
+    sam.objectQueue = [[], [], [batteryObject()], [], [], [], [], [], [], []];
+    const res = await request(app())
+      .post(`/api/v1/sessions/${id}/evidence/${fileId}/identification`)
+      .set({ Authorization: `Bearer ${token}` });
+    expect(res.status).toBe(201);
+    expect(sam.calls.map((c) => c.concept).slice(0, 2)).toEqual(["battery", "cooling fan"]);
+    expect(sam.calls.map((c) => c.concept)).toContain("keyboard");
+    expect(res.body.annotations.length).toBeGreaterThan(0);
+    expect(res.body.warnings.join(" ")).toContain("generic device parts");
+  });
+
   it("returns 404 when a file was never identified", async () => {
     const { id, token } = await createSession();
     const fileId = await uploadImage(id, token);
@@ -306,7 +325,7 @@ describe("identification routes", () => {
     expect(res.body.identification.components).toHaveLength(3);
   });
 
-  it("warns when nothing is confident enough to locate", async () => {
+  it("warns and sweeps generically when nothing is confident enough to locate", async () => {
     const { id, token } = await createSession();
     const fileId = await uploadImage(id, token);
     vision.text = visionPayload({
@@ -318,7 +337,10 @@ describe("identification routes", () => {
       .set({ Authorization: `Bearer ${token}` });
     expect(res.status).toBe(201);
     expect(res.body.warnings.join(" ")).toContain("No confident component names");
-    expect(sam.calls).toHaveLength(0);
+    // The generic device sweep still outlines parts so the photo is
+    // never bare — 8 laptop concepts, all finding the fake object.
+    expect(sam.calls).toHaveLength(8);
+    expect(res.body.annotations.length).toBeGreaterThan(0);
   });
 
   it("returns 500 instead of crashing on unexpected failures", async () => {

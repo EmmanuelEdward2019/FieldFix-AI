@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Brain, ClipboardCheck, TriangleAlert, Wrench } from "lucide-react";
+import { ArrowRight, Brain, ClipboardCheck, ShieldAlert, TriangleAlert, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { AnalysisLoader } from "../fx/analysis-loader";
 import { SafetyScene } from "../fx/safety-scene";
 import type { DemoLoopActions } from "./demo-actions";
+import { analysisAttention, useIdentificationReady } from "./identification-panel";
 import {
   humanize,
   safetyClassificationVariant,
@@ -41,7 +42,14 @@ function nextTest(session: DemoSession): DemoTest | null {
   const ordered = [...session.tests].sort((a, b) => a.position - b.position);
   return (
     ordered.find(
-      (t) => t.result == null && t.status !== "blocked" && t.status !== "skipped",
+      (t) =>
+        t.result == null &&
+        t.status !== "blocked" &&
+        t.status !== "skipped" &&
+        // The backend refuses results for safety-blocked tests, so the
+        // hero must never offer one — otherwise Record always fails and
+        // the header count looks frozen.
+        t.safety_classification !== "blocked",
     ) ?? null
   );
 }
@@ -61,7 +69,7 @@ function Shell({
       className={cn(
         "rounded-xl border p-4 sm:p-5",
         tone === "action" && "border-cyan-400/30 bg-cyan-400/[0.04]",
-        tone === "stop" && "border-red-400/40 bg-red-400/[0.06]",
+        tone === "stop" && "border-2 border-red-400/60 bg-red-400/10",
         tone === "warn" && "border-amber-400/40 bg-amber-400/[0.06]",
         tone === "done" && "border-edge bg-panel",
       )}
@@ -86,13 +94,14 @@ export function NextAction({ session, live, demo, milestoneScope }: NextActionPr
     const latest = session.safety_events[session.safety_events.length - 1];
     return (
       <Shell tone="stop" label="Stop: hazard identified">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" role="alert">
           <SafetyScene tone="stop" className="w-20 shrink-0 sm:w-24" />
           <div className="min-w-0">
-            <p className="text-xs font-semibold tracking-wide text-red-300 uppercase">
+            <p className="flex flex-wrap items-center gap-2 text-xs font-semibold tracking-wide text-red-300 uppercase">
+              <Badge variant="danger">Critical stop</Badge>
               Stop — hazard identified
             </p>
-            <h2 className="mt-0.5 text-base font-semibold text-slate-50">
+            <h2 className="mt-1 text-lg font-bold text-slate-50">
               Do not run tests on this device
             </h2>
             <p className="mt-1 text-sm text-slate-300">
@@ -144,12 +153,44 @@ export function NextAction({ session, live, demo, milestoneScope }: NextActionPr
           live={live}
           demo={demo}
           deviceType={session.device_type}
+          hypothesisCount={session.hypotheses.length}
           busy={busy}
           setBusy={setBusy}
           error={error}
           setError={setError}
           milestoneScope={milestoneScope}
         />
+      );
+    }
+    const blockedRemaining = session.tests.filter(
+      (t) => t.result == null && t.safety_classification === "blocked",
+    ).length;
+    if (blockedRemaining > 0) {
+      return (
+        <Shell tone="warn" label="Remaining tests blocked">
+          <div className="flex items-start gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-amber-400/15">
+              <ShieldAlert className="size-5 text-amber-300" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold tracking-wide text-amber-300 uppercase">
+                Tests blocked
+              </p>
+              <h2 className="mt-0.5 text-base font-semibold text-slate-50">
+                {blockedRemaining} remaining test{blockedRemaining === 1 ? "" : "s"} blocked
+                on safety grounds
+              </h2>
+              <p className="mt-1 text-sm text-slate-300">
+                The safety screener blocked {blockedRemaining === 1 ? "this test" : "these tests"},
+                so results cannot be recorded for {blockedRemaining === 1 ? "it" : "them"}.{" "}
+                {recorded > 0
+                  ? `${recorded} result${recorded === 1 ? " was" : "s were"} recorded before the block.`
+                  : "No results were recorded."}{" "}
+                A technician can review the checklist below.
+              </p>
+            </div>
+          </div>
+        </Shell>
       );
     }
     return (
@@ -430,6 +471,7 @@ function NoTestsHero({
   live,
   demo,
   deviceType,
+  hypothesisCount,
   busy,
   setBusy,
   error,
@@ -439,12 +481,23 @@ function NoTestsHero({
   live?: NextActionLive;
   demo?: DemoLoopActions;
   deviceType: string;
+  hypothesisCount: number;
   busy: boolean;
   setBusy: (v: boolean) => void;
   error: string | null;
   setError: (v: string | null) => void;
   milestoneScope?: string;
 }) {
+  const identificationReady = useIdentificationReady();
+  // This hero only renders outside critical/review states, so the live
+  // button is actionable whenever it is idle.
+  const attention = analysisAttention({
+    live: live != null,
+    identificationReady,
+    hypothesisCount,
+    busy,
+    blocked: false,
+  });
   const analyze = () => {
     if (!live || busy) {
       return;
@@ -489,10 +542,26 @@ function NoTestsHero({
           )}
         </div>
         {live ? (
-          <Button type="button" onClick={analyze} disabled={busy}>
-            <Brain aria-hidden />
-            {busy ? "Analysing…" : "Run AI analysis"}
-          </Button>
+          <div className="flex flex-col items-stretch gap-2">
+            {attention && (
+              <p className="text-xs font-medium text-cyan-200">
+                Components identified — run analysis next.
+              </p>
+            )}
+            <Button
+              type="button"
+              onClick={analyze}
+              disabled={busy}
+              className={
+                attention
+                  ? "ring-2 ring-cyan-300 ring-offset-2 ring-offset-panel motion-safe:animate-attention"
+                  : undefined
+              }
+            >
+              <Brain aria-hidden />
+              {busy ? "Analysing…" : "Run AI analysis"}
+            </Button>
+          </div>
         ) : demo ? (
           <div className="flex flex-col items-stretch gap-2">
             <Button

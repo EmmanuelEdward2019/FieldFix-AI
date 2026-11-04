@@ -35,6 +35,8 @@ import { ReportRepository } from "../db/repositories/reports.js";
 import { SafetyEventRepository } from "../db/repositories/safety.js";
 import { recordTestResult } from "../db/workflows.js";
 import { CitationService } from "../knowledge/citations.js";
+import { CitationRepository } from "../db/repositories/citations.js";
+import { ChunkRepository, searchChunks } from "../db/repositories/documents.js";
 import type { DiagnosticReasoningService } from "../models/diagnostic-reasoning.js";
 import { isLoopBlocked, type SafetyController } from "../safety/controller.js";
 import { screenTestSafety } from "./safety-screen.js";
@@ -207,7 +209,19 @@ export class DiagnosticEngineService {
 
       const appliedTests: DiagnosticTest[] = [];
       const priorTests = await tests.listBySession(sessionId);
-      const position = priorTests.reduce((max, t) => Math.max(max, t.position), -1) + 1;
+      const priorResults = await new TestResultRepository(trx).listBySession(sessionId);
+      const recordedIds = new Set(priorResults.map((r) => r.test_id));
+      // Skip proposals that duplicate an open test (same name, same
+      // screening): reassessment re-proposes freely, and without this
+      // the checklist grows a same-named twin on every run. A
+      // re-screened variant (blocked -> safe) is new information, so
+      // the classification is part of the key.
+      const openKeys = new Set(
+        priorTests
+          .filter((t) => !recordedIds.has(t.id) && t.status !== "skipped")
+          .map((t) => testDedupeKey(t.name, t.safety_classification)),
+      );
+      let nextPosition = priorTests.reduce((max, t) => Math.max(max, t.position), -1) + 1;
       const hasAwaiting = priorTests.some((t) => t.status === "awaiting_result");
       const proposed = outcome.assessment.recommended_tests.map((rec, index) => {
         const screening = screenTestSafety({
@@ -219,7 +233,14 @@ export class DiagnosticEngineService {
         return { rec, index, screening };
       });
       let awaitedThisRun = false;
-      for (const { rec, index, screening } of proposed) {
+      const skippedDuplicates: string[] = [];
+      for (const { rec, screening } of proposed) {
+        const key = testDedupeKey(rec.name, screening.classification);
+        if (openKeys.has(key)) {
+          skippedDuplicates.push(rec.name);
+          continue;
+        }
+        openKeys.add(key);
         const created = await tests.create(sessionId, {
           name: rec.name,
           objective: rec.objective,
@@ -232,7 +253,7 @@ export class DiagnosticEngineService {
           result_options: withFallbackOptions(
             rec.result_options.map((label, i) => ({ value: `option_${i + 1}`, label })),
           ),
-          position: position + index,
+          position: nextPosition++,
         });
         // The first actionable proposal becomes the current test;
         // blocked proposals never do.
@@ -245,18 +266,20 @@ export class DiagnosticEngineService {
         }
       }
 
+      const appliedByName = new Map(appliedTests.map((t) => [testDedupeKey(t.name, t.safety_classification), t.id]));
       await events.append(sessionId, {
         event_type: "analysis_completed",
         payload: {
           run_id: outcome.run.id,
           stage,
           hypothesis_changes: changes,
-          tests_proposed: proposed.map((p, i) => ({
-            test_id: appliedTests[i]?.id ?? null,
+          tests_proposed: proposed.map((p) => ({
+            test_id: appliedByName.get(testDedupeKey(p.rec.name, p.screening.classification)) ?? null,
             name: p.rec.name,
             safety_classification: p.screening.classification,
             safety_matched: p.screening.matched,
           })),
+          tests_skipped_duplicates: skippedDuplicates,
           suggested_next_action: outcome.assessment.suggested_next_action,
         },
       });
@@ -270,18 +293,117 @@ export class DiagnosticEngineService {
           userId: session.user_id,
         });
       }
-      return { hypotheses: appliedHypotheses, tests: appliedTests };
+      return { hypotheses: appliedHypotheses, tests: appliedTests, skippedDuplicates };
     });
 
     const hypotheses = await new HypothesisRepository(db).listBySession(sessionId);
+    const warnings = [...outcome.warnings];
+    if (applied.skippedDuplicates.length > 0) {
+      warnings.push(
+        `Skipped ${applied.skippedDuplicates.length} duplicate test proposal${applied.skippedDuplicates.length === 1 ? "" : "s"} already awaiting results.`,
+      );
+    }
+    const consulted = await this.consultManuals(session, applied.hypotheses);
+    warnings.push(...consulted.warnings);
     return {
       ok: true,
       assessment: outcome.assessment,
       hypotheses,
       tests: applied.tests,
       run: outcome.run,
-      warnings: outcome.warnings,
+      warnings,
     };
+  }
+
+  /**
+   * Consult the knowledge base once hypotheses land: full-text search
+   * over approved, indexed manuals and cite the top passages on the
+   * leading hypothesis, so the workspace and report show which manuals
+   * informed the diagnosis. Never fails analysis — an empty library
+   * or a search error simply yields no citations.
+   */
+  private async consultManuals(
+    session: DiagnosticSession,
+    hypotheses: DiagnosticHypothesis[],
+  ): Promise<{ cited: number; warnings: string[] }> {
+    const warnings: string[] = [];
+    const lead = hypotheses[0];
+    if (!lead) {
+      return { cited: 0, warnings };
+    }
+    const query = [session.device_type, session.manufacturer, session.model, session.symptoms]
+      .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+      .join(" ")
+      .slice(0, 500);
+    if (query.trim().length === 0) {
+      return { cited: 0, warnings };
+    }
+    try {
+      const hits = await searchChunks(
+        this.deps.db,
+        { query, limit: 5 },
+        { match: "any" },
+      );
+      if (hits.length === 0) {
+        return { cited: 0, warnings };
+      }
+      const citations = new CitationService(this.deps.db);
+      const chunks = new ChunkRepository(this.deps.db);
+      const existing = await new CitationRepository(this.deps.db).listBySession(session.id);
+      const citedChunks = new Set(existing.map((c) => c.chunk_id));
+      // Rank order, distinct documents first: the panel should name
+      // manuals, not three passages from one guide.
+      const fresh = [...hits]
+        .sort((a, b) => b.rank - a.rank)
+        .filter((h) => !citedChunks.has(h.chunk_id));
+      const ordered: typeof fresh = [];
+      for (const documentId of [...new Set(fresh.map((h) => h.document_id))]) {
+        const hit = fresh.find((h) => h.document_id === documentId);
+        if (hit && ordered.length < 3) {
+          ordered.push(hit);
+        }
+      }
+      for (const hit of fresh) {
+        if (ordered.length >= 3) {
+          break;
+        }
+        if (!ordered.includes(hit)) {
+          ordered.push(hit);
+        }
+      }
+      const terms = query
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length > 2);
+      let cited = 0;
+      for (const hit of ordered) {
+        if (cited >= 3 || citedChunks.has(hit.chunk_id)) {
+          continue;
+        }
+        const chunk = await chunks.getById(hit.chunk_id);
+        if (!chunk) {
+          continue;
+        }
+        const excerpt = matchWindow(chunk.content, terms, 600);
+        if (excerpt.trim().length === 0) {
+          continue;
+        }
+        await citations.create(session.id, {
+          hypothesis_id: lead.id,
+          chunk_id: hit.chunk_id,
+          excerpt,
+          note: "Auto-consulted during AI analysis.",
+        });
+        citedChunks.add(hit.chunk_id);
+        cited += 1;
+      }
+      return { cited, warnings };
+    } catch (err) {
+      warnings.push(
+        `Manual consultation skipped: ${err instanceof Error ? err.message : "search failed."}`,
+      );
+      return { cited: 0, warnings };
+    }
   }
 
   /**
@@ -620,6 +742,31 @@ function composeAssessment(
 
 function sameTitle(a: string, b: string): boolean {
   return normalizeTitle(a) === normalizeTitle(b);
+}
+
+function testDedupeKey(name: string, classification: string): string {
+  return `${normalizeTitle(name)}|${classification}`;
+}
+
+/**
+ * Verbatim window around the first query-term hit, so auto-citations
+ * quote the matched passage instead of the chunk's opening lines.
+ * Falls back to the leading slice when only the heading matched.
+ */
+function matchWindow(content: string, terms: string[], maxLength: number): string {
+  const lower = content.toLowerCase();
+  let at = -1;
+  for (const term of terms) {
+    const index = lower.indexOf(term);
+    if (index >= 0 && (at < 0 || index < at)) {
+      at = index;
+    }
+  }
+  if (at < 0) {
+    return content.slice(0, maxLength);
+  }
+  const start = Math.max(0, at - 200);
+  return content.slice(start, start + maxLength);
 }
 
 function normalizeTitle(value: string): string {

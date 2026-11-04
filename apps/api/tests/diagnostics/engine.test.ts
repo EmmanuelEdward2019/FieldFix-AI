@@ -8,6 +8,11 @@ import { SessionRepository } from "../../src/db/repositories/sessions.js";
 import { HypothesisRepository } from "../../src/db/repositories/hypotheses.js";
 import { ObservationRepository } from "../../src/db/repositories/evidence.js";
 import { EventRepository } from "../../src/db/repositories/events.js";
+import { CitationRepository } from "../../src/db/repositories/citations.js";
+import {
+  ChunkRepository,
+  DocumentRepository,
+} from "../../src/db/repositories/documents.js";
 import { DiagnosticEngineService } from "../../src/diagnostics/engine.js";
 import { SafetyController } from "../../src/safety/controller.js";
 import { DiagnosticReasoningService } from "../../src/models/diagnostic-reasoning.js";
@@ -434,5 +439,90 @@ describe("DiagnosticEngineService", () => {
       observation: "No screwdriver available.",
     });
     expect(recorded.test.status).toBe("skipped");
+  });
+
+  it("skips duplicate test proposals instead of twinning the checklist", async () => {
+    const sessionId = await makeSession();
+    provider.queueSuccess(
+      assessmentBody({
+        hypotheses: [hypothesis()],
+        recommended_tests: [recommendedTest()],
+      }),
+    );
+    // Reassessment re-proposes the same test plus a genuinely new one.
+    provider.queueSuccess(
+      assessmentBody({
+        hypotheses: [hypothesis({ assessment_status: "supported" })],
+        recommended_tests: [recommendedTest(), recommendedTest({ name: "Temperature check" })],
+      }),
+    );
+    const first = await engine.analyze(sessionId, {});
+    expect(first.ok).toBe(true);
+    const second = await engine.analyze(sessionId, { stage: "reassessment" });
+    expect(second.ok).toBe(true);
+    if (!second.ok) {
+      throw new Error("expected reassessment to succeed");
+    }
+    expect(second.tests.map((t) => t.name)).toEqual(["Temperature check"]);
+    expect(second.warnings.join(" ")).toContain("duplicate");
+  });
+
+  it("cites manual passages on the leading hypothesis during analysis", async () => {
+    const sessionId = await makeSession();
+    const doc = await new DocumentRepository(db).create({
+      title: "Acme Cooling Service Notes",
+      manufacturer: "Acme",
+      model_numbers: [],
+      document_type: "service_manual",
+      source_name: "engine test fixture",
+      language: "en",
+      permission_status: "approved",
+    });
+    await new ChunkRepository(db).create(
+      doc.id,
+      {
+        chunk_index: 0,
+        content:
+          "A clogged heatsink restricts airflow through the vents, causing overheating shutdowns under load. Clean the fins before replacing parts.",
+        safety_tags: [],
+        component_tags: [],
+        model_applicability: [],
+      },
+    );
+    await new DocumentRepository(db).updateIngestion(doc.id, {
+      ingestion_status: "indexed",
+      permission_status: "approved",
+    });
+    provider.queueSuccess(
+      assessmentBody({
+        hypotheses: [hypothesis()],
+        recommended_tests: [recommendedTest()],
+      }),
+    );
+    const analyzed = await engine.analyze(sessionId, {});
+    expect(analyzed.ok).toBe(true);
+    const citations = await new CitationRepository(db).listBySession(sessionId);
+    expect(citations).toHaveLength(1);
+    expect(citations[0]?.note).toContain("Auto-consulted");
+    expect(citations[0]?.excerpt).toContain("clogged heatsink");
+  });
+
+  it("analyses cleanly when no manual matches the session", async () => {
+    const sessionId = await makeSession();
+    provider.queueSuccess(
+      assessmentBody({
+        hypotheses: [hypothesis()],
+        recommended_tests: [recommendedTest()],
+      }),
+    );
+    const analyzed = await engine.analyze(sessionId, {});
+    expect(analyzed.ok).toBe(true);
+    if (!analyzed.ok) {
+      throw new Error("expected analysis to succeed");
+    }
+    expect(
+      await new CitationRepository(db).listBySession(sessionId),
+    ).toHaveLength(0);
+    expect(analyzed.warnings.join(" ")).not.toContain("Manual consultation skipped");
   });
 });

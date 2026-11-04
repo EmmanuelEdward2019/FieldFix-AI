@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CircleHelp, Cpu, ScanSearch } from "lucide-react";
-import type { IdentificationResponse } from "@fieldfix/contracts";
-import { Badge } from "@/components/ui/badge";
+import { AlertTriangle, Cpu, ScanSearch } from "lucide-react";
+import type { IdentificationResponse, IdentifyResponse } from "@fieldfix/contracts";
 import { Button } from "@/components/ui/button";
 import {
   ApiError,
@@ -11,7 +10,6 @@ import {
   getIdentificationApi,
   identifyEvidenceApi,
 } from "@/lib/api";
-import { colorForLabel } from "./segmentation-layer";
 
 export interface IdentificationState {
   status: "loading" | "idle" | "identifying" | "ready" | "error";
@@ -23,17 +21,49 @@ export interface IdentificationState {
 }
 
 /**
+ * In-flight identification passes by session + file. Mounts that overlap
+ * (StrictMode remounts, retries racing a pass) attach to the same
+ * promise instead of firing duplicate vision + SAM calls.
+ */
+const identifyInflight = new Map<string, Promise<IdentifyResponse>>();
+
+function autoIdentify(
+  key: string,
+  sessionId: string,
+  fileId: string,
+  token: string,
+): Promise<IdentifyResponse> {
+  const existing = identifyInflight.get(key);
+  if (existing) {
+    return existing;
+  }
+  // Own controller: the pass must survive the effect unmount that a
+  // remount performs between the 404 read and the pass itself.
+  const controller = new AbortController();
+  const promise = identifyEvidenceApi(sessionId, fileId, token, controller.signal).finally(
+    () => {
+      if (identifyInflight.get(key) === promise) {
+        identifyInflight.delete(key);
+      }
+    },
+  );
+  identifyInflight.set(key, promise);
+  return promise;
+}
+
+/**
  * Visual identification for one live evidence image. Reads the latest
- * persisted pass on mount (a missing pass is idle, not an error);
- * `identify` runs a new vision + localization pass. On success the
- * caller should refresh segmentations — identification localizes
- * components into the shared annotation layer.
+ * persisted pass on mount; with `auto` a missing pass starts
+ * immediately instead of waiting for a button that no longer exists.
+ * On success the caller should refresh segmentations — identification
+ * localizes components into the shared annotation layer.
  */
 export function useIdentification(
   sessionId: string,
   token: string,
   fileId: string,
   enabled = true,
+  auto = false,
 ): IdentificationState {
   const [status, setStatus] = useState<IdentificationState["status"]>("loading");
   const [identification, setIdentification] = useState<IdentificationResponse | null>(null);
@@ -59,6 +89,28 @@ export function useIdentification(
           return;
         }
         if (err instanceof ApiError && err.code === "identification_not_found") {
+          if (auto) {
+            setStatus("identifying");
+            setWarnings([]);
+            void autoIdentify(`${sessionId}:${fileId}`, sessionId, fileId, token).then(
+              (res) => {
+                if (controller.signal.aborted) {
+                  return;
+                }
+                setIdentification(res.identification);
+                setWarnings(res.warnings);
+                setStatus("ready");
+              },
+              (passError: unknown) => {
+                if (controller.signal.aborted) {
+                  return;
+                }
+                setMessage(describeApiError(passError));
+                setStatus("error");
+              },
+            );
+            return;
+          }
           setIdentification(null);
           setStatus("idle");
           return;
@@ -68,7 +120,7 @@ export function useIdentification(
       },
     );
     return () => controller.abort();
-  }, [sessionId, fileId, token, reload, enabled]);
+  }, [sessionId, fileId, token, reload, enabled, auto]);
 
   const identify = useCallback(() => {
     if (!enabled) {
@@ -99,33 +151,66 @@ export function useIdentification(
   return { status, identification, warnings, message, identify, retry };
 }
 
-function ConfidenceBadge({ level }: { level: string }) {
-  switch (level) {
-    case "high":
-      return <Badge variant="success">High</Badge>;
-    case "medium":
-      return <Badge variant="secondary">Medium</Badge>;
-    default:
-      return <Badge variant="muted">Low</Badge>;
-  }
+/**
+ * Broadcast when the selected photo gains (or loses) named components,
+ * so the analysis buttons elsewhere on the page can demand attention.
+ * The canvas owns the per-file hook; props cannot reach across the
+ * workspace composition, hence a window event with a boolean detail.
+ */
+export const IDENTIFICATION_EVENT = "fieldfix:identification-ready";
+
+/** True once the current photo has named components. */
+export function useIdentificationReady(): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      setReady(
+        (event as CustomEvent<{ ready?: boolean }>).detail?.ready === true,
+      );
+    };
+    window.addEventListener(IDENTIFICATION_EVENT, handler);
+    return () => window.removeEventListener(IDENTIFICATION_EVENT, handler);
+  }, []);
+  return ready;
 }
 
 /**
- * Identification panel: device name, identified components (select to
- * highlight on the photo), the suspected fault area framed as a
- * visual hypothesis, and regions the model could not name.
+ * The analysis button earns its attention animation exactly when the
+ * photo is identified, nothing has been diagnosed yet, and the button
+ * is actionable.
+ */
+export function analysisAttention(input: {
+  live: boolean;
+  identificationReady: boolean;
+  hypothesisCount: number;
+  busy: boolean;
+  blocked: boolean;
+}): boolean {
+  return (
+    input.live &&
+    input.identificationReady &&
+    input.hypothesisCount === 0 &&
+    !input.busy &&
+    !input.blocked
+  );
+}
+
+/**
+ * Identification panel: device name, recognition framing, and the
+ * suspected fault area as a visual hypothesis. Components themselves
+ * are labelled graphically on the photo (circles, arrows, boxes) with
+ * a tappable legend — never as a typed list.
  */
 export function IdentificationPanel({
   state,
-  selectedLabel,
-  onSelectLabel,
   onLocalized,
+  labelledCount,
 }: {
   state: IdentificationState;
-  selectedLabel: string | null;
-  onSelectLabel: (label: string | null) => void;
   /** Refresh the shared annotation overlay after a pass localizes. */
   onLocalized: () => void;
+  /** Distinct components outlined on the photo; named-but-unoutlined parts stay counted, not claimed. */
+  labelledCount: number;
 }) {
   const { status, identification, warnings, message } = state;
   const prevStatus = useRef(status);
@@ -139,10 +224,30 @@ export function IdentificationPanel({
     prevStatus.current = status;
   }, [status, identification, onLocalized]);
 
-  if (status === "loading" || status === "identifying") {
+  useEffect(() => {
+    const ready =
+      status === "ready" && (identification?.components.length ?? 0) > 0;
+    window.dispatchEvent(
+      new CustomEvent(IDENTIFICATION_EVENT, { detail: { ready } }),
+    );
+    return () => {
+      window.dispatchEvent(
+        new CustomEvent(IDENTIFICATION_EVENT, { detail: { ready: false } }),
+      );
+    };
+  }, [status, identification]);
+
+  if (status === "loading" || status === "identifying" || status === "idle") {
     return (
-      <div role="status" aria-label="Identifying components" className="text-xs text-slate-400">
-        {status === "loading" ? "Checking for a previous identification…" : "Identifying components…"}
+      <div
+        role="status"
+        aria-label="Identifying components"
+        className="flex items-center gap-2 rounded-lg border border-dashed border-cyan-400/40 bg-cyan-400/[0.04] p-3 text-xs text-slate-300"
+      >
+        <ScanSearch className="size-4 shrink-0 text-cyan-300 motion-safe:animate-pulse-soft" aria-hidden />
+        {status === "loading"
+          ? "Checking for a previous identification…"
+          : "Identifying components automatically — names and outlines appear on the photo above."}
       </div>
     );
   }
@@ -161,21 +266,17 @@ export function IdentificationPanel({
     );
   }
 
-  if (status === "idle" || !identification) {
+  if (!identification) {
+    // Unreachable in practice (ready always carries an identification),
+    // kept so a missing pass can never render an empty panel.
     return (
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={state.identify}
-        >
-          <ScanSearch aria-hidden />
-          Identify components
-        </Button>
-        <span className="text-xs text-slate-500">
-          Names the device and visible parts, then marks them on the photo.
-        </span>
+      <div
+        role="status"
+        aria-label="Identifying components"
+        className="flex items-center gap-2 rounded-lg border border-dashed border-cyan-400/40 bg-cyan-400/[0.04] p-3 text-xs text-slate-300"
+      >
+        <ScanSearch className="size-4 shrink-0 text-cyan-300 motion-safe:animate-pulse-soft" aria-hidden />
+        Identifying components automatically — names and outlines appear on the photo above.
       </div>
     );
   }
@@ -190,54 +291,18 @@ export function IdentificationPanel({
         {identification.device_name && (
           <span className="text-xs text-slate-400">· {identification.device_name}</span>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={state.identify}
-          className="ml-auto"
-        >
-          Re-run
-        </Button>
+        <span className="rounded border border-edge bg-canvas px-1.5 py-0.5 text-[11px] text-slate-400">
+          Recognition — not a diagnosis
+        </span>
       </div>
 
-      {identification.components.length === 0 ? (
-        <p className="text-xs text-slate-400">
-          No components could be named confidently in this photo.
-        </p>
-      ) : (
-        <ul aria-label="Identified components" className="flex flex-col gap-1" role="list">
-          {identification.components.map((item) => {
-            const selected = selectedLabel === item.name;
-            return (
-              <li key={`${item.name}-${item.confidence}`}>
-                <button
-                  type="button"
-                  onClick={() => onSelectLabel(selected ? null : item.name)}
-                  aria-pressed={selected}
-                  title="Highlight on the photo"
-                  className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors ${
-                    selected
-                      ? "border-cyan-400/40 bg-cyan-400/5 text-slate-100"
-                      : "border-edge text-slate-300 hover:border-edge-strong hover:text-slate-100"
-                  }`}
-                >
-                  <span
-                    aria-hidden
-                    className="size-2.5 shrink-0 rounded-[2px]"
-                    style={{ backgroundColor: colorForLabel(item.name) }}
-                  />
-                  <span className="min-w-0 flex-1 truncate font-medium">{item.name}</span>
-                  <ConfidenceBadge level={item.confidence} />
-                </button>
-                {item.note && (
-                  <p className="px-2 pt-0.5 pb-1 text-[11px] text-slate-500">{item.note}</p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <p className="text-xs text-slate-400">
+        {identification.components.length === 0
+          ? "No components could be named confidently in this photo."
+          : labelledCount === 0
+            ? `${identification.components.length} component${identification.components.length === 1 ? "" : "s"} named, but none could be outlined on this photo — try a closer, brighter shot of the parts.`
+            : `${identification.components.length} named · ${labelledCount} outlined on the photo above — tap a legend chip to isolate one.`}
+      </p>
 
       {identification.suspected_fault_area && (
         <div
@@ -254,22 +319,6 @@ export function IdentificationPanel({
             A visual hypothesis only — it needs testing before any conclusion. It does not change
             the diagnosis.
           </p>
-        </div>
-      )}
-
-      {identification.unidentifiable.length > 0 && (
-        <div>
-          <p className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
-            <CircleHelp className="size-3.5" aria-hidden />
-            Could not confidently identify
-          </p>
-          <ul className="mt-1 flex flex-col gap-0.5" role="list">
-            {identification.unidentifiable.map((region) => (
-              <li key={region} className="text-xs text-slate-500">
-                · {region}
-              </li>
-            ))}
-          </ul>
         </div>
       )}
 

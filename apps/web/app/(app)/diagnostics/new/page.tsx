@@ -37,6 +37,8 @@ function Wizard() {
           model: input.model || undefined,
           operating_system: input.os || undefined,
           symptoms: input.symptoms,
+          problem_started_note: input.problemStarted || undefined,
+          recent_events: input.recentEvents || undefined,
           user_mode: input.userMode,
         },
         undefined,
